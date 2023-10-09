@@ -14,6 +14,7 @@ const clients = new Set();
 const videoFolderPath = path.join(__dirname, "videos");
 const videoFiles = [];
 const upstreamData = {
+  stauts: "pause",
   fileName: "",
   recordTime: 0,
   timestamp: 0,
@@ -33,7 +34,12 @@ wss.on("connection", (ws) => {
   // 中途加入房间，通知新加入成员
   if (upstreamData.fileName !== "") {
     ws.send(JSON.stringify({ type: "select", fileName: upstreamData.fileName }));
-    ws.send(JSON.stringify({ type: "play", currentTime: +upstreamData.recordTime + +(Math.round(Date.now() - upstreamData.timestamp) / 1000) }));
+    ws.send(
+      JSON.stringify({
+        type: upstreamData.stauts === "play" ? "play" : "seek",
+        currentTime: +upstreamData.recordTime + +(Math.round(Date.now() - upstreamData.timestamp) / 1000),
+      }),
+    );
   }
   // 当有新客户端连接时，通知其他客户端
   broadcastMessage({ type: "userCount", count: clients.size });
@@ -54,6 +60,8 @@ wss.on("connection", (ws) => {
         upstreamData.recordTime = decodedMessage.currentTime;
         upstreamData.timestamp = Date.now();
       }
+      if (decodedMessage.type === "play") upstreamData.stauts = "play";
+      else if (decodedMessage.type === "pause") upstreamData.stauts = "pause";
       broadcastMessage(decodedMessage);
     }
   });
