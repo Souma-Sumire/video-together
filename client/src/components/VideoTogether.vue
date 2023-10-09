@@ -10,9 +10,9 @@
       <p>
         正在播放
         <strong>{{ fileName }}</strong>
-        <p v-show="socketStatus === SocketStatus.success">房间人数: {{ userCount }}</p>
+        <br />
+        <span v-show="socketStatus === SocketStatus.success">房间人数: {{ userCount }}</span>
       </p>
-      
       <video ref="videoPlayer" controls @play="startPlayback" @pause="pausePlayback" @seeked="seekPlayback" @ratechange="rateChangeback"></video>
     </div>
     <div>
@@ -30,7 +30,7 @@
 import { Ref, onUnmounted, ref } from "vue";
 import { useStorage } from "@vueuse/core";
 import { ElNotification } from "element-plus";
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from "uuid";
 
 const userCount = ref(0);
 const videoPlayer: Ref<HTMLVideoElement | null> = ref(null);
@@ -52,19 +52,41 @@ enum SocketStatus {
   success = "连接成功",
   failed = "连接失败",
 }
+let heartbeatInterval: number | undefined;
 
 const openMessage = (message: string, duration = 1000) => {
-  return ElNotification({ message, duration, showClose: false, customClass: "el-notification" }).close;
+  return ElNotification({ message, duration, showClose: false }).close;
+};
+
+const startHeartbeat = () => {
+  heartbeatInterval && clearInterval(heartbeatInterval);
+  // 设置一个定时器，每隔一定时间发送心跳消息
+  heartbeatInterval = setInterval(sendHeartbeat, 5000); // 每5秒发送一次心跳
+};
+
+const sendHeartbeat = () => {
+  socket && socket.send(JSON.stringify({ type: "heartbeat", source: UUID }));
 };
 
 // let closeUserCount: Function;
 
 const handleConnect = () => {
-  server.value = server.value.trim()
+  server.value = server.value.trim();
   socket = new WebSocket(`ws://${server.value}`);
   socketStatus.value = SocketStatus.connecting;
   socket.addEventListener("open", () => {
     socketStatus.value = SocketStatus.success;
+    startHeartbeat(); // 启动心跳
+  });
+  socket.addEventListener("close", () => {
+    ElNotification({
+      title: "错误",
+      message: "连接已断开",
+      type: "error",
+      duration: 0,
+    });
+    heartbeatInterval && clearInterval(heartbeatInterval);
+    socketStatus.value = SocketStatus.failed;
   });
   socket.addEventListener("error", () => {
     socketStatus.value = SocketStatus.failed;
@@ -83,62 +105,68 @@ const handleConnect = () => {
         if (videoPlayer.value.paused) {
           videoPlayer.value.currentTime = message.currentTime;
           videoPlayer.value.play();
-          openMessage("播放");
-        }
-      } else if (message.type === "pause") {
-        changeMessage.pause = Date.now();
-        if (!videoPlayer.value.paused) {
-          videoPlayer.value.pause();
-          openMessage("暂停");
+          openMessage("播放", 3000);
+          console.log("接受play");
         }
       } else if (message.type === "seek") {
         changeMessage.playAndSeek = Date.now();
         if (Math.abs(videoPlayer.value.currentTime - message.currentTime) > 1) {
           videoPlayer.value.currentTime = message.currentTime;
-          openMessage("同步进度");
+          openMessage("同步进度", 3000);
+          console.log("接受seek");
+        }
+      } else if (message.type === "pause") {
+        changeMessage.pause = Date.now();
+        if (!videoPlayer.value.paused) {
+          videoPlayer.value.pause();
+          openMessage("暂停", 3000);
+          console.log("接受pause");
         }
       } else if (message.type === "rate") {
         changeMessage.rate = Date.now();
         if (!Number.isNaN(message.playbackRate) && videoPlayer.value.playbackRate !== message.playbackRate) {
           videoPlayer.value.playbackRate = message.playbackRate;
-          openMessage("同步倍速");
+          openMessage("同步倍速", 3000);
+          console.log("接受rate");
         }
       } else if (message.type === "videoList") {
         videos.value.length = 0;
         videos.value.push(...message.videos);
         openMessage("已刷新文件列表", 3000);
+        console.log("接受videoList");
       } else if (message.type === "select") {
         fileName.value = message.fileName;
         selectFile();
         openMessage(`已选择文件`, 3000);
+        console.log("接受select");
       }
     }
   });
 };
 
 const startPlayback = () => {
-  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.playAndSeek >= 500) {
+  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.playAndSeek >= 200) {
     socket && socket.send(JSON.stringify({ type: "play", source: UUID, currentTime: videoPlayer.value.currentTime }));
-    // console.log("发送play");
-  }
-};
-
-const pausePlayback = () => {
-  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.pause >= 500) {
-    socket && socket.send(JSON.stringify({ type: "pause", source: UUID, currentTime: videoPlayer.value.currentTime }));
-    // console.log("发送pause");
+    console.log("发送play");
   }
 };
 
 const seekPlayback = () => {
-  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.playAndSeek >= 500) {
+  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.playAndSeek >= 200) {
     socket && socket.send(JSON.stringify({ type: "seek", source: UUID, currentTime: videoPlayer.value.currentTime }));
-    // console.log("发送seek", videoPlayer.value.currentTime);
+    console.log("发送seek", videoPlayer.value.currentTime);
+  }
+};
+
+const pausePlayback = () => {
+  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.pause >= 200) {
+    socket && socket.send(JSON.stringify({ type: "pause", source: UUID, currentTime: videoPlayer.value.currentTime }));
+    console.log("发送pause");
   }
 };
 
 const rateChangeback = () => {
-  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.rate >= 500) {
+  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.rate >= 200) {
     socket && socket.send(JSON.stringify({ type: "rate", source: UUID, playbackRate: videoPlayer.value.playbackRate }));
   }
 };
@@ -147,7 +175,7 @@ const handleListClick = (event: MouseEvent) => {
   if ((event.target as HTMLElement)?.nodeName === "A") {
     fileName.value = (event.target as HTMLElement).id;
     selectFile();
-    if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.pause >= 500) {
+    if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.pause >= 200) {
       socket && socket.send(JSON.stringify({ type: "select", source: UUID, fileName: fileName.value }));
     }
     // videoPlayer.value?.play();
@@ -167,6 +195,7 @@ const selectFile = () => {
 //   handleConnect();
 // });
 onUnmounted(() => {
+  heartbeatInterval && clearInterval(heartbeatInterval);
   socket && socket.close();
 });
 
