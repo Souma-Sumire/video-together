@@ -22,6 +22,7 @@
         </li>
       </ul>
       <button v-if="videos.length" @click="updateVideoFiles">刷新文件列表</button>
+      <p>版本: v1.0.0.4</p>
     </div>
   </div>
 </template>
@@ -45,6 +46,7 @@ const changeMessage = {
   seek: 0,
   rate: 0,
 };
+const lastSeek: { currentTime: number; timer: number | undefined } = { currentTime: 0, timer: undefined };
 const videos: Ref<string[]> = ref([]);
 const fileName = ref("");
 enum SocketStatus {
@@ -114,6 +116,12 @@ const handleConnect = () => {
           videoPlayer.value.currentTime = message.currentTime;
           openMessage("同步进度", 3000);
           console.log("接受seek");
+          lastSeek.currentTime = message.currentTime;
+          lastSeek.timer && clearTimeout(lastSeek.timer);
+          lastSeek.timer = setTimeout(() => {
+            lastSeek.timer = undefined;
+            lastSeek.currentTime = 0;
+          }, 2000);
         }
       } else if (message.type === "pause") {
         changeMessage.pause = Date.now();
@@ -152,7 +160,12 @@ const startPlayback = () => {
 };
 
 const seekPlayback = () => {
-  if (videoPlayer.value instanceof HTMLVideoElement && Date.now() - changeMessage.playAndSeek >= 200) {
+  if (
+    videoPlayer.value instanceof HTMLVideoElement &&
+    Date.now() - changeMessage.playAndSeek >= 200 &&
+    lastSeek.timer === undefined &&
+    (Math.abs(videoPlayer.value.currentTime - lastSeek.currentTime) > 3 || lastSeek.currentTime === 0)
+  ) {
     socket && socket.send(JSON.stringify({ type: "seek", source: UUID, currentTime: videoPlayer.value.currentTime }));
     console.log("发送seek", videoPlayer.value.currentTime);
   }
