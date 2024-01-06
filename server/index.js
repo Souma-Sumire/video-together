@@ -15,7 +15,7 @@ const videoFiles = [];
 const upstreamData = {
   stauts: "pause",
   fileName: "",
-  recordTime: 0,
+  currentTime: 0,
   timestamp: 0,
 };
 
@@ -30,48 +30,56 @@ app.use("/videos", express.static(path.join(__dirname, "videos")));
 wss.on("connection", (ws) => {
   clients.add(ws);
 
-  // 中途加入房间，通知新加入成员
-  if (upstreamData.fileName !== "") {
-    ws.send(JSON.stringify({ type: "select", fileName: upstreamData.fileName }));
-    ws.send(
-      JSON.stringify({
-        type: upstreamData.stauts === "play" ? "play" : "seek",
-        currentTime: +upstreamData.recordTime + +(Math.round(Date.now() - upstreamData.timestamp) / 1000),
-      }),
-    );
-  }
-  // 当有新客户端连接时，通知其他客户端
   broadcastMessage({ type: "userCount", count: clients.size });
 
-  // 将视频文件列表广播给当前连接的客户端
-  ws.send(JSON.stringify({ type: "videoList", videos: videoFiles }));
+  ws.send(
+    JSON.stringify({
+      type: "init",
+      initData: {
+        type: upstreamData.stauts === "play" ? "play" : "pause",
+        videoList: videoFiles,
+        fileName: upstreamData.fileName,
+        currentTime:
+          upstreamData.currentTime === 0
+            ? 0
+            : +upstreamData.currentTime + +(Date.now() - upstreamData.timestamp) / 1000,
+      },
+    })
+  );
 
   ws.on("message", (message) => {
     const decodedMessage = JSON.parse(message.toString("utf-8"));
-    if (decodedMessage.type === "updateVideoFiles") {
+
+    if (decodedMessage.type === "hreatcheck") {
+      ws.send(JSON.stringify({ type: "hreatcheck" }));
+    } else if (decodedMessage.type === "updateVideoFiles") {
       updateVideoFiles();
       ws.send(JSON.stringify({ type: "videoList", videos: videoFiles }));
     } else {
       if (decodedMessage.fileName) {
         upstreamData.fileName = decodedMessage.fileName;
       }
+
       if (decodedMessage.currentTime) {
-        upstreamData.recordTime = decodedMessage.currentTime;
+        upstreamData.currentTime = decodedMessage.currentTime;
         upstreamData.timestamp = Date.now();
       }
+
       if (decodedMessage.type === "play") upstreamData.stauts = "play";
-      else if (decodedMessage.type === "pause") upstreamData.stauts = "pause";
+      if (decodedMessage.type === "pause") upstreamData.stauts = "pause";
+
       broadcastMessage(decodedMessage);
     }
   });
 
   ws.on("close", () => {
     clients.delete(ws);
-    // 当有客户端断开连接时，通知其他客户端
     broadcastMessage({ type: "userCount", count: clients.size });
     if (clients.size === 0) {
       upstreamData.fileName = "";
-      upstreamData.recordTime = 0;
+      upstreamData.currentTime = 0;
+      upstreamData.timestamp = 0;
+      upstreamData.stauts = "pause";
     }
   });
 });
